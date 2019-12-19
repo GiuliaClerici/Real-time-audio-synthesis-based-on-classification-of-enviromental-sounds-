@@ -61,6 +61,7 @@ incr = 2048
 zeros_bytes = bytes(2048)
 prev_out = bytes(2048)
 flagSample = 0
+nframes = 0
 
 def playSound(label, fn):
     fn = 'samples/action-kick.wav' if label == 0 else 'samples/ec-hat002.wav' if label == 1 else 'samples/ec-sn004.wav'  # in base all'etichetta ottenuta seleziono il nome del file audio da caricare
@@ -84,7 +85,7 @@ def callback(in_data, frame_count, time_info, status):
     #    print("Stato della callback: %i" % status)
 
     # variabili globali presentate anche nelle precedenti righe di codice
-    global model, f, ind, buff, start_time, process, prev_chunk, step, incr, zeros_bytes, flagSample, prev_out, kick_nframes, hat_nframes, snare_nframes
+    global model, f, ind, buff, start_time, process, prev_chunk, step, incr, zeros_bytes, flagSample, prev_out, kick_nframes, hat_nframes, snare_nframes, nframes
     out_data = bytes()
 
     start_time = time.time() # tempo di inzio per misurare approssimativamente i tempi
@@ -102,8 +103,8 @@ def callback(in_data, frame_count, time_info, status):
         mfcc = np.mean(librosa.feature.mfcc(y=buff, sr=RATE, n_mfcc=13).T, axis=0)  # su tale buffer, di 2048, calcolo le 13 mfcc
         X_test = scaler.transform(list(mfcc.reshape(1, -1)))  # normalizzo l'istanza di test
         label = model.predict(X_test)  # predico un'etichetta per il picco rilevato => buffer
-        print("label: ", label)  # stampo etichetta
-        print("time: ", time.time() - start_time)
+        #print("label: ", label)  # stampo etichetta
+        #print("time: ", time.time() - start_time)
         #fn = 'samples/action-kick.wav' if label == 0 else 'samples/ec-hat002.wav' if label == 1 else 'samples/ec-sn004.wav'  # in base all'etichetta ottenuta seleziono il nome del file audio da caricare
         fn = kick if label == 0 else hat if label == 1 else snare  # in base all'etichetta ottenuta seleziono il nome del file audio da caricare
         # IL MULTIPROCESSING NON MI SEMBRA ABBASSARE MOLTO I TEMPI NELLA RIPRODUZIONE DEI CAMPIONI?!
@@ -126,15 +127,38 @@ def callback(in_data, frame_count, time_info, status):
             step = incr
             incr = incr + 2048
             prev_out = snare_bytes[step:incr]
-        print("out_data: ", out_data)
-        prev_out = out_data
+        #print("out_data: ", out_data)
+        #prev_out = out_data
+        prev_out = kick_bytes if label == 0 else hat_bytes if label == 1 else snare_bytes
+        nframes = kick_nframes if label == 0 else hat_nframes if label == 1 else snare_nframes
+        #print("nframes: ", nframes)
+        #print("step: ", step)
+        #print("incr: ", incr)
         flagSample = 1
 
     else:  # se non ho rilevato indici e non devo continuare il campione audio
         if flagSample == 1:
-            out_data = prev_out
-            print("out_data: ", out_data)
-            print("passato")
+            if incr < nframes:
+                out_data = prev_out[step:incr]
+                step = incr
+                incr = incr + 2048
+                #print("step: ", step)
+                #print("incr: ", incr)
+                #print("out_data: ", out_data)
+                #print("passato")
+            else:
+                incr = nframes
+                out_data = prev_out[step:incr]
+                #print("step: ", step)
+                #print("incr: ", incr)
+                #print("inside else")
+                #print("len out_data corto: ", len(out_data))
+                out_data = out_data + bytes(2048 - len(out_data))
+                #print("len out_data teoricamente giusto: ", len(out_data))
+                #out_data = zeros_bytes
+                step = 0
+                incr = 2048
+                flagSample = 0
         else:
             out_data = zeros_bytes
 

@@ -1,13 +1,10 @@
-import pyaudio  # Soundcard audio I/O access library
+import pyaudio
 import numpy as np
 import librosa
 import sklearn
 import peakutils
 import time
-import playsound as ps
-import threading
 import wave
-import multiprocessing
 import joblib
 
 # -------------------------------------sia Training che Test------------------------------------------------------------
@@ -41,6 +38,8 @@ except Exception as e:
 
 # Startup - istanza pyaudio
 audio = pyaudio.PyAudio()
+print(audio.get_default_input_device_info())
+print(audio.get_default_output_device_info())
 # inizializzo le variabili globali che utilizzo all'interno della funzione di callback
 f = 0  # flag per indicare quanti blocchi/chunk ancora dovrò prendere e per far sì che siano di 2048
 ind = 0  # variabile che conterrà l'indice del picco rilevato e che mi consentirà di selezionare esattamente 2048 campioni
@@ -63,12 +62,6 @@ prev_out = bytes(2048)
 flagSample = 0
 nframes = 0
 
-def playSound(label, fn):
-    fn = 'samples/action-kick.wav' if label == 0 else 'samples/ec-hat002.wav' if label == 1 else 'samples/ec-sn004.wav'  # in base all'etichetta ottenuta seleziono il nome del file audio da caricare
-    ps.playsound(fn)  # triggero il suono in base all'etichetta, triggerando uno specifico campione di batteria
-    return
-
-
 def callback(in_data, frame_count, time_info, status):
     '''
 
@@ -88,7 +81,6 @@ def callback(in_data, frame_count, time_info, status):
     global model, f, ind, buff, start_time, process, prev_chunk, step, incr, zeros_bytes, flagSample, prev_out, kick_nframes, hat_nframes, snare_nframes, nframes
     out_data = bytes()
 
-    start_time = time.time() # tempo di inzio per misurare approssimativamente i tempi
     data_input = np.fromstring(in_data, dtype=np.int16)  # prendo in ingresso i byte
     data_input = data_input.astype(np.float32, order='C') / 32768.0  # converto audio a float32
     data = np.nan_to_num(data_input)  # controllo non vi siano nan
@@ -105,13 +97,7 @@ def callback(in_data, frame_count, time_info, status):
         label = model.predict(X_test)  # predico un'etichetta per il picco rilevato => buffer
         #print("label: ", label)  # stampo etichetta
         #print("time: ", time.time() - start_time)
-        #fn = 'samples/action-kick.wav' if label == 0 else 'samples/ec-hat002.wav' if label == 1 else 'samples/ec-sn004.wav'  # in base all'etichetta ottenuta seleziono il nome del file audio da caricare
         fn = kick if label == 0 else hat if label == 1 else snare  # in base all'etichetta ottenuta seleziono il nome del file audio da caricare
-        # IL MULTIPROCESSING NON MI SEMBRA ABBASSARE MOLTO I TEMPI NELLA RIPRODUZIONE DEI CAMPIONI?!
-        #process = multiprocessing.Process(target=playSound(label, fn))
-        #process.start()
-        #process.terminate()
-        #print("time: ", time.time() - start_time)
         if label == 0:
             out_data = kick_bytes[step:incr]
             step = incr
@@ -127,13 +113,8 @@ def callback(in_data, frame_count, time_info, status):
             step = incr
             incr = incr + 2048
             prev_out = snare_bytes[step:incr]
-        #print("out_data: ", out_data)
-        #prev_out = out_data
         prev_out = kick_bytes if label == 0 else hat_bytes if label == 1 else snare_bytes
         nframes = kick_nframes if label == 0 else hat_nframes if label == 1 else snare_nframes
-        #print("nframes: ", nframes)
-        #print("step: ", step)
-        #print("incr: ", incr)
         flagSample = 1
 
     else:  # se non ho rilevato indici e non devo continuare il campione audio
@@ -142,26 +123,15 @@ def callback(in_data, frame_count, time_info, status):
                 out_data = prev_out[step:incr]
                 step = incr
                 incr = incr + 2048
-                #print("step: ", step)
-                #print("incr: ", incr)
-                #print("out_data: ", out_data)
-                #print("passato")
             else:
                 incr = nframes
                 out_data = prev_out[step:incr]
-                #print("step: ", step)
-                #print("incr: ", incr)
-                #print("inside else")
-                #print("len out_data corto: ", len(out_data))
                 out_data = out_data + bytes(2048 - len(out_data))
-                #print("len out_data teoricamente giusto: ", len(out_data))
-                #out_data = zeros_bytes
                 step = 0
                 incr = 2048
                 flagSample = 0
         else:
             out_data = zeros_bytes
-
     prev_chunk = data
     return (out_data, pyaudio.paContinue)  # restituisco dati audio e flag per dire di continuare a restare in ascolto
 
@@ -185,62 +155,3 @@ stream.stop_stream()
 stream.close()
 # Chiudo istanza PyAudio
 audio.terminate()
-
-'''
-# --------------------------------------- raccolgo un buffer di 2048 campioni
-if indici.size != 0 and f == 0:  # se ho rilevato un picco e dunque il flag mi indica che è il primo blocco da 1024
-    start_time = time.time()  # inizio a calcolare la latenza da qua (? - brutto, devo capire come calcolarla in modo esatto)
-    buff = data[indici[0]:]  # memorizzo i campioni dall'indice del picco rilevato per tutto il blocco di 1024
-    ind = indici[0]  # controllo che il picco sia unico all'interno di tale blocco - non dovrebbe servire ma per sicurezza tengo il controllo
-    f = f + 1  # cambio flag per poi passare a memorizzare i campioni del blocco successivo
-elif f == 1:  # primo blocco che segue quello contenente il picco
-    buff = np.concatenate((buff, data))  # concateno ai campioni già memorizzati l'intero blocco corrente, al fine di avere infine un buffer di 2048
-    f = f + 1  # cambio flag per poi passare a memorizzare i campioni del blocco successivo
-elif f == 2:  # terzo ed ultimo blocco
-    buff = np.concatenate((buff, data[0:ind]))  # ai campioni memorizzati finora, concateno un numero di campioni che mi consentano di avere un buffer completo di 2048
-    # buff = librosa.util.normalize(buff)
-    mfcc = np.mean(librosa.feature.mfcc(y=buff, sr=RATE, n_mfcc=13).T, axis=0)  # su tale buffer, di 2048, calcolo le 13 mfcc
-    X_test = scaler.transform(list(mfcc.reshape(1, -1)))  # normalizzo l'istanza di test
-    label = model.predict(X_test)  # predico un'etichetta per il picco rilevato => buffer
-    print("label: ", label)  # stampo etichetta
-    fn = 'samples/action-kick.wav' if label == 0 else 'samples/ec-hat002.wav' if label == 1 else 'samples/ec-sn004.wav'  # in base all'etichetta ottenuta seleziono il nome del file audio da caricare
-
-    process = multiprocessing.Process(target=playSound(label))
-    process.start()
-    process.terminate()
-
-
-    # with wave.open(fn) as fd:
-    #    out_data = fd.readframes(1000000)
-    #    print("out_data: ", out_data)
-    #    print("in_data: ", in_data)
-
-    # in_data = out_data
-    # tempo = time.time() - start_time # rilevo il tempo impiegato per svolgere questi compiti
-    # print("--- %s seconds ---" % (tempo)) # stampo tempo di latenza tra rilevamento picco e fin emissione del suono
-    f = 0  # reimposto flag
-'''
-'''#------------------> utilizzando persino meno di 1024 campioni riesco a classificare correttamente polistirolo e pentolino
-if indici.size != 0:
-    mfcc = np.mean(librosa.feature.mfcc(y=data[indici[0]:], sr=RATE, n_mfcc=13).T, axis=0)  # su tale buffer, di 2048, calcolo le 13 mfcc
-    X_test = scaler.transform(list(mfcc.reshape(1, -1)))  # normalizzo l'istanza di test
-    label = model.predict(X_test)  # predico un'etichetta per il picco rilevato => buffer
-    print("label: ", label)  # stampo etichetta
-    fn = 'samples/action-kick.wav' if label == 0 else 'samples/ec-hat002.wav' if label == 1 else 'samples/ec-sn004.wav'  # in base all'etichetta ottenuta seleziono il nome del file audio da caricare
-    process = multiprocessing.Process(target=playSound(label))
-    process.start()
-    process.terminate()
-'''
-'''
-if indici.size != 0:
-    prec = 1024 - indici[0]
-    buff = np.concatenate((prev_chunk[-prec:], data[0:indici[0]]))
-    mfcc = np.mean(librosa.feature.mfcc(y=buff, sr=RATE, n_mfcc=13).T, axis=0)  # su tale buffer, di 2048, calcolo le 13 mfcc
-    X_test = scaler.transform(list(mfcc.reshape(1, -1)))  # normalizzo l'istanza di test
-    label = model.predict(X_test)  # predico un'etichetta per il picco rilevato => buffer
-    print("label: ", label)  # stampo etichetta
-    fn = 'samples/action-kick.wav' if label == 0 else 'samples/ec-hat002.wav' if label == 1 else 'samples/ec-sn004.wav'  # in base all'etichetta ottenuta seleziono il nome del file audio da caricare
-    process = multiprocessing.Process(target=playSound(label))
-    process.start()
-    process.terminate()
-'''
